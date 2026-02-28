@@ -3,7 +3,7 @@
 大盘复盘市场区域配置
 
 定义各市场区域的指数、新闻搜索词、Prompt 提示等元数据，
-供 MarketAnalyzer 按 region 切换 A 股/美股复盘行为。
+供 MarketAnalyzer 按 region 切换 A 股/美股/日股复盘行为。
 """
 
 from dataclasses import dataclass
@@ -14,8 +14,8 @@ from typing import List
 class MarketProfile:
     """大盘复盘市场区域配置"""
 
-    region: str  # "cn" | "us"
-    # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX
+    region: str  # "cn" | "us" | "jp"
+    # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX，jp 用日经 N225
     mood_index_code: str
     # 新闻搜索关键词
     news_queries: List[str]
@@ -53,9 +53,24 @@ US_PROFILE = MarketProfile(
     has_sector_rankings=False,
 )
 
+JP_PROFILE = MarketProfile(
+    region="jp",
+    mood_index_code="N225",
+    news_queries=[
+        "日本株 大盘",
+        "Nikkei 225 market",
+        "TOPIX market",
+    ],
+    prompt_index_hint="分析日经225、东证指数等各指数走势特点",
+    has_market_stats=False,
+    has_sector_rankings=False,
+)
+
 
 def get_profile(region: str) -> MarketProfile:
     """根据 region 返回对应的 MarketProfile"""
     if region == "us":
         return US_PROFILE
+    if region == "jp":
+        return JP_PROFILE
     return CN_PROFILE

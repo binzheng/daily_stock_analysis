@@ -100,13 +100,13 @@ class MarketAnalyzer:
         Args:
             search_service: 搜索服务实例
             analyzer: AI分析器实例（用于调用LLM）
-            region: 市场区域 cn=A股 us=美股
+            region: 市场区域 cn=A股 us=美股 jp=日股
         """
         self.config = get_config()
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
-        self.region = region if region in ("cn", "us") else "cn"
+        self.region = region if region in ("cn", "us", "jp") else "cn"
         self.profile: MarketProfile = get_profile(self.region)
 
     def get_market_overview(self) -> MarketOverview:
@@ -119,14 +119,14 @@ class MarketAnalyzer:
         today = datetime.now().strftime('%Y-%m-%d')
         overview = MarketOverview(date=today)
         
-        # 1. 获取主要指数行情（按 region 切换 A 股/美股）
+        # 1. 获取主要指数行情（按 region 切换 A 股/美股/日股）
         overview.indices = self._get_main_indices()
 
-        # 2. 获取涨跌统计（A 股有，美股无等效数据）
+        # 2. 获取涨跌统计（A 股有，海外市场无等效数据）
         if self.profile.has_market_stats:
             self._get_market_statistics(overview)
 
-        # 3. 获取板块涨跌榜（A 股有，美股暂无）
+        # 3. 获取板块涨跌榜（A 股有，海外市场暂无）
         if self.profile.has_sector_rankings:
             self._get_sector_rankings(overview)
         
@@ -255,8 +255,13 @@ class MarketAnalyzer:
         try:
             logger.info("[大盘] 开始搜索市场新闻...")
             
-            # 根据 region 设置搜索上下文名称，避免美股搜索被解读为 A 股语境
-            market_name = "大盘" if self.region == "cn" else "US market"
+            # 根据 region 设置搜索上下文名称，避免海外搜索被解读为 A 股语境
+            if self.region == "cn":
+                market_name = "大盘"
+            elif self.region == "jp":
+                market_name = "Japan market"
+            else:
+                market_name = "US market"
             for query in search_queries:
                 response = self.search_service.search_stock_news(
                     stock_code="market",
@@ -441,24 +446,24 @@ class MarketAnalyzer:
                 snippet = n.get('snippet', '')[:100]
             news_text += f"{i}. {title}\n   {snippet}\n"
         
-        # 按 region 组装市场概况与板块区块（美股无涨跌家数、板块数据）
+        # 按 region 组装市场概况与板块区块（海外市场无涨跌家数、板块数据）
         stats_block = ""
         sector_block = ""
-        if self.region == "us":
+        if self.region in ("us", "jp"):
             if self.profile.has_market_stats:
                 stats_block = f"""## Market Overview
 - Up: {overview.up_count} | Down: {overview.down_count} | Flat: {overview.flat_count}
 - Limit up: {overview.limit_up_count} | Limit down: {overview.limit_down_count}
 - Total volume (CNY bn): {overview.total_amount:.0f}"""
             else:
-                stats_block = "## Market Overview\n(US market has no equivalent advance/decline stats.)"
+                stats_block = "## Market Overview\n(US/JP market has no equivalent advance/decline stats.)"
 
             if self.profile.has_sector_rankings:
                 sector_block = f"""## Sector Performance
 Leading: {top_sectors_text if top_sectors_text else "N/A"}
 Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
             else:
-                sector_block = "## Sector Performance\n(US sector data not available.)"
+                sector_block = "## Sector Performance\n(US/JP sector data not available.)"
         else:
             if self.profile.has_market_stats:
                 stats_block = f"""## 市场概况
@@ -466,31 +471,37 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
 - 涨停: {overview.limit_up_count} 家 | 跌停: {overview.limit_down_count} 家
 - 两市成交额: {overview.total_amount:.0f} 亿元"""
             else:
-                stats_block = "## 市场概况\n（美股暂无涨跌家数等统计）"
+                stats_block = "## 市场概况\n（海外市场暂无涨跌家数等统计）"
 
             if self.profile.has_sector_rankings:
                 sector_block = f"""## 板块表现
 领涨: {top_sectors_text if top_sectors_text else "暂无数据"}
 领跌: {bottom_sectors_text if bottom_sectors_text else "暂无数据"}"""
             else:
-                sector_block = "## 板块表现\n（美股暂无板块涨跌数据）"
+                sector_block = "## 板块表现\n（海外市场暂无板块涨跌数据）"
 
         data_no_indices_hint = (
             "注意：由于行情数据获取失败，请主要根据【市场新闻】进行定性分析和总结，不要编造具体的指数点位。"
             if not indices_text
             else ""
         )
-        indices_placeholder = indices_text if indices_text else ("No index data (API error)" if self.region == "us" else "暂无指数数据（接口异常）")
-        news_placeholder = news_text if news_text else ("No relevant news" if self.region == "us" else "暂无相关新闻")
+        indices_placeholder = indices_text if indices_text else ("No index data (API error)" if self.region in ("us", "jp") else "暂无指数数据（接口异常）")
+        news_placeholder = news_text if news_text else ("No relevant news" if self.region in ("us", "jp") else "暂无相关新闻")
 
-        # 美股场景使用英文提示语，便于生成更符合美股语境的报告
-        if self.region == "us":
+        # 美股/日股场景使用英文提示语，便于生成更符合语境的报告
+        if self.region in ("us", "jp"):
+            market_label_en = "US" if self.region == "us" else "Japan"
+            index_hint = (
+                "Analyse S&P 500, Nasdaq, Dow and other major index moves."
+                if self.region == "us"
+                else "Analyse Nikkei 225, TOPIX and other major index moves."
+            )
             data_no_indices_hint_en = (
                 "Note: Market data fetch failed. Rely mainly on [Market News] for qualitative analysis. Do not invent index levels."
                 if not indices_text
                 else ""
             )
-            return f"""You are a professional US/A/H market analyst. Please produce a concise US market recap report based on the data below.
+            return f"""You are a professional {market_label_en} market analyst. Please produce a concise {market_label_en} market recap report based on the data below.
 
 [Requirements]
 - Output pure Markdown only
@@ -521,13 +532,13 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
 
 # Output Template (follow this structure)
 
-## {overview.date} US Market Recap
+## {overview.date} {market_label_en} Market Recap
 
 ### 1. Market Summary
 (2-3 sentences on overall market performance, index moves, volume)
 
 ### 2. Index Commentary
-(Analyse S&P 500, Nasdaq, Dow and other major index moves.)
+({index_hint})
 
 ### 3. Fund Flows
 (Interpret volume and flow implications)
@@ -547,7 +558,7 @@ Output the report content directly, no extra commentary.
 """
 
         # A 股场景使用中文提示语
-        return f"""你是一位专业的A/H/美股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
+        return f"""你是一位专业的A/H/美股/日股市场分析师，请根据以下数据生成一份简洁的大盘复盘报告。
 
 【重要】输出要求：
 - 必须输出纯 Markdown 文本格式
@@ -639,7 +650,7 @@ Output the report content directly, no extra commentary.
         top_text = "、".join([s['name'] for s in overview.top_sectors[:3]])
         bottom_text = "、".join([s['name'] for s in overview.bottom_sectors[:3]])
         
-        # 按 region 决定是否包含涨跌统计和板块（美股无）
+        # 按 region 决定是否包含涨跌统计和板块（海外市场无）
         stats_section = ""
         if self.profile.has_market_stats:
             stats_section = f"""
@@ -659,7 +670,12 @@ Output the report content directly, no extra commentary.
 - **领涨**: {top_text}
 - **领跌**: {bottom_text}
 """
-        market_label = "A股" if self.region == "cn" else "美股"
+        if self.region == "cn":
+            market_label = "A股"
+        elif self.region == "jp":
+            market_label = "日股"
+        else:
+            market_label = "美股"
         report = f"""## {overview.date} 大盘复盘
 
 ### 一、市场总结

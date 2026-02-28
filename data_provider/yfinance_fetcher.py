@@ -30,7 +30,15 @@ from tenacity import (
 
 from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS
 from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
-from .us_index_mapping import get_us_index_yf_symbol, is_us_index_code, is_us_stock_code
+from .us_index_mapping import (
+    get_us_index_yf_symbol,
+    is_us_index_code,
+    is_us_stock_code,
+    is_jp_stock_code,
+    is_jp_index_code,
+    get_jp_index_yf_symbol,
+    get_jp_stock_yf_symbol,
+)
 import os
 
 logger = logging.getLogger(__name__)
@@ -98,6 +106,19 @@ class YfinanceFetcher(BaseFetcher):
             logger.debug(f"识别为美股代码: {code}")
             return code
 
+        # 日股指数：N225 -> ^N225
+        yf_jp_idx, _ = get_jp_index_yf_symbol(code)
+        if yf_jp_idx:
+            logger.debug(f"识别为日股指数: {code} -> {yf_jp_idx}")
+            return yf_jp_idx
+
+        # 日股个股：JP7203/7203/7203.T -> 7203.T（东京证券交易所）
+        if is_jp_stock_code(code):
+            jp_symbol, _ = get_jp_stock_yf_symbol(code)
+            if jp_symbol:
+                logger.debug(f"转换日股代码: {code} -> {jp_symbol}")
+                return jp_symbol
+
         # 港股：hk前缀 -> .HK后缀
         if code.startswith('HK'):
             hk_code = code[2:].lstrip('0') or '0'  # 去除前导0，但保留至少一个0
@@ -106,7 +127,7 @@ class YfinanceFetcher(BaseFetcher):
             return f"{hk_code}.HK"
 
         # 已经包含后缀的情况
-        if '.SS' in code or '.SZ' in code or '.HK' in code:
+        if '.SS' in code or '.SZ' in code or '.HK' in code or '.T' in code:
             return code
 
         # 去除可能的 .SH 后缀
@@ -284,13 +305,15 @@ class YfinanceFetcher(BaseFetcher):
 
     def get_main_indices(self, region: str = "cn") -> Optional[List[Dict[str, Any]]]:
         """
-        获取主要指数行情 (Yahoo Finance)，支持 A 股与美股。
-        region=us 时委托给 _get_us_main_indices。
+        获取主要指数行情 (Yahoo Finance)，支持 A 股/美股/日股。
+        region=us/jp 时委托给对应方法。
         """
         import yfinance as yf
 
         if region == "us":
             return self._get_us_main_indices(yf)
+        if region == "jp":
+            return self._get_jp_main_indices(yf)
 
         # A 股指数：akshare 代码 -> (yfinance 代码, 显示名称)
         yf_mapping = {
@@ -346,6 +369,32 @@ class YfinanceFetcher(BaseFetcher):
 
         except Exception as e:
             logger.error(f"[Yfinance] 获取美股指数行情失败: {e}")
+
+        return None
+
+    def _get_jp_main_indices(self, yf) -> Optional[List[Dict[str, Any]]]:
+        """获取日股主要指数行情（N225、TOPIX），复用 _fetch_yf_ticker_data"""
+        jp_indices = ["N225", "TOPIX"]
+        results = []
+        try:
+            for code in jp_indices:
+                yf_symbol, name = get_jp_index_yf_symbol(code)
+                if not yf_symbol:
+                    continue
+                try:
+                    item = self._fetch_yf_ticker_data(yf, yf_symbol, name, code)
+                    if item:
+                        results.append(item)
+                        logger.debug(f"[Yfinance] 获取日股指数 {name} 成功")
+                except Exception as e:
+                    logger.warning(f"[Yfinance] 获取日股指数 {name} 失败: {e}")
+
+            if results:
+                logger.info(f"[Yfinance] 成功获取 {len(results)} 个日股指数行情")
+                return results
+
+        except Exception as e:
+            logger.error(f"[Yfinance] 获取日股指数行情失败: {e}")
 
         return None
 
@@ -444,13 +493,14 @@ class YfinanceFetcher(BaseFetcher):
 
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """
-        获取美股/美股指数实时行情数据
+        获取美股/美股指数/日股/日股指数实时行情数据
 
-        支持美股股票（AAPL、TSLA）和美股指数（SPX、DJI 等）。
+        支持美股股票（AAPL、TSLA）、美股指数（SPX、DJI 等）、
+        日股个股（JP7203）和日股指数（N225、TOPIX）。
         数据来源：yfinance Ticker.info
 
         Args:
-            stock_code: 美股代码或指数代码，如 'AMD', 'AAPL', 'SPX', 'DJI'
+            stock_code: 股票代码或指数代码
 
         Returns:
             UnifiedRealtimeQuote 对象，获取失败返回 None
@@ -466,14 +516,24 @@ class YfinanceFetcher(BaseFetcher):
                 index_name=index_name,
             )
 
-        # 仅处理美股股票
-        if not self._is_us_stock(stock_code):
-            logger.debug(f"[Yfinance] {stock_code} 不是美股，跳过")
+        # 日股指数：使用映射（N225 -> ^N225）
+        yf_jp_symbol, jp_index_name = get_jp_index_yf_symbol(stock_code)
+        if yf_jp_symbol:
+            return self._get_us_index_realtime_quote(
+                user_code=stock_code.strip().upper(),
+                yf_symbol=yf_jp_symbol,
+                index_name=jp_index_name,
+            )
+
+        # 仅处理美股与日股个股
+        if not self._is_us_stock(stock_code) and not is_jp_stock_code(stock_code):
+            logger.debug(f"[Yfinance] {stock_code} 不是美股/日股，跳过")
             return None
 
         try:
-            symbol = stock_code.strip().upper()
-            logger.debug(f"[Yfinance] 获取美股 {symbol} 实时行情")
+            # 日股需要转换代码格式（JP7203 -> 7203.T），美股直接使用原代码
+            symbol = self._convert_stock_code(stock_code)
+            logger.debug(f"[Yfinance] 获取行情 {stock_code} -> {symbol}")
             
             ticker = yf.Ticker(symbol)
             
@@ -550,7 +610,7 @@ class YfinanceFetcher(BaseFetcher):
                 circ_mv=None,
             )
             
-            logger.info(f"[Yfinance] 获取美股 {symbol} 实时行情成功: 价格={price}")
+            logger.info(f"[Yfinance] 获取 {symbol} 实时行情成功: 价格={price}")
             return quote
             
         except Exception as e:

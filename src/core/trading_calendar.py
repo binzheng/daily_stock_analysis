@@ -30,13 +30,14 @@ except ImportError:
     )
 
 # Market -> exchange code (exchange-calendars)
-MARKET_EXCHANGE = {"cn": "XSHG", "hk": "XHKG", "us": "XNYS"}
+MARKET_EXCHANGE = {"cn": "XSHG", "hk": "XHKG", "us": "XNYS", "jp": "XTKS"}
 
 # Market -> IANA timezone for "today"
 MARKET_TIMEZONE = {
     "cn": "Asia/Shanghai",
     "hk": "Asia/Hong_Kong",
     "us": "America/New_York",
+    "jp": "Asia/Tokyo",
 }
 
 
@@ -51,10 +52,12 @@ def get_market_for_stock(code: str) -> Optional[str]:
         return None
     code = (code or "").strip().upper()
 
-    from data_provider import is_us_stock_code, is_us_index_code, is_hk_stock_code
+    from data_provider import is_us_stock_code, is_us_index_code, is_hk_stock_code, is_jp_stock_code, is_jp_index_code
 
     if is_us_stock_code(code) or is_us_index_code(code):
         return "us"
+    if is_jp_stock_code(code) or is_jp_index_code(code):
+        return "jp"
     if is_hk_stock_code(code):
         return "hk"
     # A-share: 6-digit numeric
@@ -98,7 +101,7 @@ def get_open_markets_today() -> Set[str]:
         Set of market keys ('cn', 'hk', 'us') that are trading today
     """
     if not _XCALS_AVAILABLE:
-        return {"cn", "hk", "us"}
+        return {"cn", "hk", "us", "jp"}
     result: Set[str] = set()
     from zoneinfo import ZoneInfo
     for mkt, tz_name in MARKET_TIMEZONE.items():
@@ -120,20 +123,22 @@ def compute_effective_region(
     Compute effective market review region given config and open markets.
 
     Args:
-        config_region: From MARKET_REVIEW_REGION ('cn' | 'us' | 'both')
+        config_region: From MARKET_REVIEW_REGION ('cn' | 'us' | 'jp' | 'both')
         open_markets: Markets open today
 
     Returns:
         None: caller uses config default (check disabled)
         '': all relevant markets closed, skip market review
-        'cn' | 'us' | 'both': effective subset for today
+        'cn' | 'us' | 'jp' | 'both': effective subset for today
     """
-    if config_region not in ("cn", "us", "both"):
+    if config_region not in ("cn", "us", "jp", "both"):
         config_region = "cn"
     if config_region == "cn":
         return "cn" if "cn" in open_markets else ""
     if config_region == "us":
         return "us" if "us" in open_markets else ""
+    if config_region == "jp":
+        return "jp" if "jp" in open_markets else ""
     # both
     parts = []
     if "cn" in open_markets:

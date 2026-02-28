@@ -981,9 +981,15 @@ class SearchService:
     
     @staticmethod
     def _is_foreign_stock(stock_code: str) -> bool:
-        """判断是否为港股或美股"""
+        """判断是否为港股、美股或日股"""
         import re
         code = stock_code.strip()
+        # 日股：4位数字、4位数字+.T、或 JP 前缀
+        upper = code.upper()
+        if re.match(r'^\d{4}(\.T)?$', upper):
+            return True
+        if upper.startswith('JP') and len(upper) == 6 and upper[2:].isdigit():
+            return True
         # 美股：1-5个大写字母，可能包含点（如 BRK.B）
         if re.match(r'^[A-Za-z]{1,5}(\.[A-Za-z])?$', code):
             return True
@@ -1095,9 +1101,20 @@ class SearchService:
 
         # 构建搜索查询（优化搜索效果）
         is_foreign = self._is_foreign_stock(stock_code)
+        import re as _re
+        normalized = stock_code.strip().upper()
+        is_jp = bool(_re.match(r'^(JP\d{4}|\d{4}(\.T)?)$', normalized))
         if focus_keywords:
             # 如果提供了关键词，直接使用关键词作为查询
             query = " ".join(focus_keywords)
+        elif is_jp:
+            # 日股：提取 4 位代码（JP7203/7203.T/7203 -> 7203），搜索日文/英文新闻
+            tse_code = normalized
+            if tse_code.startswith("JP"):
+                tse_code = tse_code[2:]
+            if tse_code.endswith(".T"):
+                tse_code = tse_code[:-2]
+            query = f"{stock_name} {tse_code} 株価 最新ニュース"
         elif is_foreign:
             # 港股/美股使用英文搜索关键词
             query = f"{stock_name} {stock_code} stock latest news"

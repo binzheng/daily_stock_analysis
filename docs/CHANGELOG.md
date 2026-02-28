@@ -19,6 +19,9 @@
   - 密码输入框初始设为 readOnly，用户聚焦时解除，阻止浏览器自动填充
 
 ### 新增（#minor）
+- 🇯🇵 **日股大盘复盘支持（日经225 / TOPIX）**
+  - `MARKET_REVIEW_REGION` 新增 `jp`，可单独生成日股大盘复盘
+  - 指数行情通过 Yahoo Finance 获取，支持 N225 与 TOPIX
 - 🚀 **桌面端 CI 自动发布到 GitHub Releases**
   - 新增 `.github/workflows/desktop-release.yml`
   - 支持 Windows 安装包（exe）+ 免安装包（zip）与 macOS x64/arm64 DMG 并行构建

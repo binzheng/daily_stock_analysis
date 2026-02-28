@@ -112,3 +112,96 @@ def get_us_index_yf_symbol(code: str) -> tuple:
     """
     normalized = (code or '').strip().upper()
     return US_INDEX_MAPPING.get(normalized, (None, None))
+
+
+# ===================================
+# 日股 (TSE) 支持
+# ===================================
+
+# 日股个股代码正则：
+# - 4 位数字（如 7203）
+# - 4 位数字 + .T（如 7203.T）
+# - JP 前缀 + 4 位数字（如 JP7203）
+_JP_STOCK_PATTERN = re.compile(r'^(JP\d{4}|\d{4}(\.T)?)$', re.IGNORECASE)
+
+# 日股主要指数映射（用户输入 -> (Yahoo Finance 符号, 中文名称)）
+JP_INDEX_MAPPING = {
+    'N225':    ('^N225', '日经225指数'),
+    '^N225':   ('^N225', '日经225指数'),
+    'NIKKEI':  ('^N225', '日经225指数'),
+    'TOPIX':   ('^TOPX', '东证指数'),
+    '^TOPX':   ('^TOPX', '东证指数'),
+}
+
+
+def is_jp_stock_code(code: str) -> bool:
+    """
+    判断代码是否为日股个股。
+
+    Args:
+        code: 股票代码，如 'JP7203', '7203', '7203.T'
+
+    Returns:
+        True 表示是日股个股代码，否则 False
+
+    Examples:
+        >>> is_jp_stock_code('JP7203')
+        True
+        >>> is_jp_stock_code('AAPL')
+        False
+        >>> is_jp_stock_code('N225')
+        False
+    """
+    return bool(_JP_STOCK_PATTERN.match((code or '').strip().upper()))
+
+
+def get_jp_stock_yf_symbol(code: str) -> tuple:
+    """
+    获取日股个股的 Yahoo Finance 符号与名称占位（名称留空）。
+
+    Args:
+        code: 用户输入，如 '7203', '7203.T', 'JP7203'
+
+    Returns:
+        (yf_symbol, None) 元组，未匹配时返回 (None, None)。
+    """
+    normalized = (code or '').strip().upper()
+    if normalized.startswith("JP") and len(normalized) == 6 and normalized[2:].isdigit():
+        return f"{normalized[2:]}.T", None
+    if normalized.endswith(".T") and normalized[:-2].isdigit() and len(normalized[:-2]) == 4:
+        return normalized, None
+    if normalized.isdigit() and len(normalized) == 4:
+        return f"{normalized}.T", None
+    return None, None
+
+
+def is_jp_index_code(code: str) -> bool:
+    """
+    判断代码是否为日股指数符号。
+
+    Args:
+        code: 指数代码，如 'N225', 'TOPIX'
+
+    Returns:
+        True 表示是已知日股指数符号，否则 False
+    """
+    return (code or '').strip().upper() in JP_INDEX_MAPPING
+
+
+def get_jp_index_yf_symbol(code: str) -> tuple:
+    """
+    获取日股指数的 Yahoo Finance 符号与中文名称。
+
+    Args:
+        code: 用户输入，如 'N225', 'TOPIX'
+
+    Returns:
+        (yf_symbol, chinese_name) 元组，未找到时返回 (None, None)。
+
+    Examples:
+        >>> get_jp_index_yf_symbol('N225')
+        ('^N225', '日经225指数')
+        >>> get_jp_index_yf_symbol('JP7203')
+        (None, None)
+    """
+    return JP_INDEX_MAPPING.get((code or '').strip().upper(), (None, None))

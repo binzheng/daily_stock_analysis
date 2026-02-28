@@ -26,6 +26,7 @@ EXTRACT_PROMPT = """请分析这张股票市场截图或图片，提取其中所
 示例：
 - A股（6位数字）：600519, 300750, 002594
 - 港股（5位数字，可有前导零）：00700, 09988
+- 日股（4位数字，可选 .T）：7203, 9984, 7203.T
 - 美股（1-5字母）：AAPL, TSLA, MSFT
 
 输出示例：["600519", "300750", "00700"]
@@ -62,12 +63,15 @@ def _verify_image_magic_bytes(image_bytes: bytes, mime_type: str) -> None:
 
 
 def _normalize_code(raw: str) -> Optional[str]:
-    """Normalize and validate a single stock code. A-shares & HK: 5-6 digits; US: 1-5 letters."""
+    """Normalize and validate a single stock code. A/H: 5-6 digits; JP: 4 digits; US: 1-5 letters."""
     s = raw.strip().upper()
     if not s:
         return None
-    # A-shares & HK: 5-6 digit codes (600519, 00700, 09988)
-    if s.isdigit() and len(s) in (5, 6):
+    # A/H: 5-6 digit codes (600519, 00700, 09988); JP: 4 digits (7203)
+    if s.isdigit() and len(s) in (4, 5, 6):
+        return s
+    # JP: 4 digits + .T
+    if re.match(r"^\d{4}\.T$", s):
         return s
     # US stocks: 1-5 letters, optionally with . (e.g. BRK.B)
     if re.match(r"^[A-Z]{1,5}(\.[A-Z])?$", s):
@@ -109,8 +113,8 @@ def _parse_codes_from_text(text: str) -> List[str]:
     except json.JSONDecodeError:
         pass
 
-    # 兜底：查找 5-6 位数字及美股代码
-    for m in re.finditer(r"\b([0-9]{5,6}|[A-Z]{1,5}(\.[A-Z])?)\b", text, re.IGNORECASE):
+    # 兜底：查找 4-6 位数字及美股代码
+    for m in re.finditer(r"\b([0-9]{4,6}|[A-Z]{1,5}(\.[A-Z])?)\b", text, re.IGNORECASE):
         c = _normalize_code(m.group(1))
         if c and c not in seen:
             seen.add(c)
